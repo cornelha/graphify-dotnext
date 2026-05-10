@@ -66,8 +66,11 @@ jobs:
       - name: Run all tests
         run: dotnet test graphify-dotnet.slnx -c Release --no-build --verbosity normal
 
-      - name: Pack the tool
-        run: dotnet pack src/Graphify.Cli/Graphify.Cli.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
+      - name: Pack NuGet packages
+        run: |
+          dotnet pack src/Graphify/Graphify.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
+          dotnet pack src/Graphify.Sdk/Graphify.Sdk.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
+          dotnet pack src/Graphify.Cli/Graphify.Cli.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o ./nupkg
 
       - name: NuGet login (OIDC trusted publishing)
         uses: NuGet/login@v1
