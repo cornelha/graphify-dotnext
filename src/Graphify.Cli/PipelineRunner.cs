@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Graphify.Cli.Configuration;
 using Graphify.Export;
 using Graphify.Graph;
 using Graphify.Models;
@@ -16,13 +17,16 @@ public sealed class PipelineRunner
     private readonly TextWriter _output;
     private readonly bool _verbose;
     private readonly IChatClient? _chatClient;
+    private readonly SurrealDbConfig? _surrealDbConfig;
     private readonly SemaphoreSlim _outputLock = new(1, 1);
 
-    public PipelineRunner(TextWriter output, bool verbose = false, IChatClient? chatClient = null)
+    public PipelineRunner(TextWriter output, bool verbose = false,
+        IChatClient? chatClient = null, SurrealDbConfig? surrealDbConfig = null)
     {
         _output = output ?? throw new ArgumentNullException(nameof(output));
         _verbose = verbose;
         _chatClient = chatClient;
+        _surrealDbConfig = surrealDbConfig;
     }
 
     public async Task<KnowledgeGraph?> RunAsync(
@@ -316,6 +320,18 @@ public sealed class PipelineRunner
                             var reportPath = Path.Combine(outputDir, "GRAPH_REPORT.md");
                             await File.WriteAllTextAsync(reportPath, reportMarkdown, cancellationToken);
                             await WriteLineAsync($"      Exported Report: {reportPath}{FormatWithElapsed(formatStopwatch.Elapsed)}");
+                            break;
+
+                        case "surrealdb":
+                            var surrealDbExporter = new SurrealDbExporter(
+                                endpoint: _surrealDbConfig?.Endpoint,
+                                username: _surrealDbConfig?.Username,
+                                password: _surrealDbConfig?.Password,
+                                ns: _surrealDbConfig?.Namespace,
+                                database: _surrealDbConfig?.Database);
+                            var surrealDbPath = Path.Combine(outputDir, "codebase.db");
+                            await surrealDbExporter.ExportAsync(graph, surrealDbPath, cancellationToken);
+                            await WriteLineAsync($"      Exported SurrealDB: {surrealDbPath}{FormatWithElapsed(formatStopwatch.Elapsed)}");
                             break;
 
                         default:
