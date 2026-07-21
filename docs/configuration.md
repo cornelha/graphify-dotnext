@@ -26,6 +26,7 @@ Select your AI backend:
 | Provider | When to use |
 |----------|-------------|
 | **Azure OpenAI** | Enterprise, private endpoints — requires endpoint, API key, deployment name |
+| **OpenAI (compatible)** | Any OpenAI-compatible service (OpenAI API, LocalAI, LiteLLM, vLLM, etc.) — requires endpoint, API key, model |
 | **Ollama (local)** | Offline/privacy — requires a running Ollama instance |
 | **GitHub Copilot SDK** | Zero-config for Copilot subscribers — just select a model |
 | **None (AST-only)** | No AI needed — structural extraction only |
@@ -80,6 +81,12 @@ export GRAPHIFY__AzureOpenAI__Endpoint=https://myresource.openai.azure.com/
 export GRAPHIFY__AzureOpenAI__ApiKey=sk-...
 export GRAPHIFY__AzureOpenAI__DeploymentName=gpt-4o
 
+# OpenAI (compatible)
+export GRAPHIFY__Provider=OpenAi
+export GRAPHIFY__OpenAi__Endpoint=https://api.openai.com/v1
+export GRAPHIFY__OpenAi__ApiKey=sk-...
+export GRAPHIFY__OpenAi__ModelId=gpt-4o
+
 # Ollama
 export GRAPHIFY__Provider=Ollama
 export GRAPHIFY__Ollama__Endpoint=http://localhost:11434
@@ -98,11 +105,18 @@ For development, use .NET user secrets to avoid committing API keys:
 cd src/Graphify.Cli
 dotnet user-secrets init
 
+# Azure OpenAI
 # Set provider and credentials
 dotnet user-secrets set "Graphify:Provider" "AzureOpenAI"
 dotnet user-secrets set "Graphify:AzureOpenAI:Endpoint" "https://myresource.openai.azure.com/"
 dotnet user-secrets set "Graphify:AzureOpenAI:ApiKey" "sk-..."
 dotnet user-secrets set "Graphify:AzureOpenAI:DeploymentName" "gpt-4o"
+
+# OpenAI (compatible)
+dotnet user-secrets set "Graphify:Provider" "OpenAi"
+dotnet user-secrets set "Graphify:OpenAi:Endpoint" "https://api.openai.com/v1"
+dotnet user-secrets set "Graphify:OpenAi:ApiKey" "sk-..."
+dotnet user-secrets set "Graphify:OpenAi:ModelId" "gpt-4o"
 ```
 
 ## The `--config` Flag on Run
@@ -122,3 +136,5 @@ For detailed setup instructions per provider:
 - [Azure OpenAI Setup](setup-azure-openai.md)
 - [Ollama Setup](setup-ollama.md)
 - [Copilot SDK Setup](setup-copilot-sdk.md)
+
+The generic **OpenAI (compatible)** provider works with any OpenAI-compatible endpoint — simply configure an endpoint URL, API key, and model ID. No separate setup guide required.
