@@ -9,7 +9,8 @@ public enum AiProvider
 {
     AzureOpenAI,
     Ollama,
-    CopilotSdk
+    CopilotSdk,
+    OpenAi
 }
 
 /// <summary>
@@ -54,6 +55,12 @@ public static class ChatClientFactory
                 new OllamaOptions(
                     Endpoint: options.Endpoint ?? "http://localhost:11434",
                     ModelId: options.ModelId ?? "llama3.2")),
+
+            AiProvider.OpenAi => OpenAIClientFactory.Create(
+                new OpenAIOptions(
+                    Endpoint: options.Endpoint ?? throw new ArgumentException("Endpoint is required for OpenAI-compatible provider.", nameof(options)),
+                    ApiKey: options.ApiKey ?? throw new ArgumentException("ApiKey is required for OpenAI-compatible provider.", nameof(options)),
+                    ModelId: options.ModelId ?? throw new ArgumentException("ModelId is required for OpenAI-compatible provider.", nameof(options)))),
 
             AiProvider.CopilotSdk => throw new InvalidOperationException(
                 "CopilotSdk requires async initialization. Use ChatClientFactory.CreateAsync() instead."),

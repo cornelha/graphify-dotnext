@@ -18,6 +18,7 @@ public static class ConfigWizard
                 .PageSize(5)
                 .AddChoices([
                     "Azure OpenAI",
+                    "OpenAI (compatible)",
                     "Ollama (local)",
                     "GitHub Copilot SDK",
                     "None (AST-only mode)"
@@ -30,6 +31,10 @@ public static class ConfigWizard
             case "Azure OpenAI":
                 config.Provider = "azureopenai";
                 PromptAzureOpenAI(config);
+                break;
+            case "OpenAI (compatible)":
+                config.Provider = "openai";
+                PromptOpenAi(config);
                 break;
             case "Ollama (local)":
                 config.Provider = "ollama";
@@ -95,6 +100,33 @@ public static class ConfigWizard
                 .DefaultValue(config.AzureOpenAI.ModelId ?? "gpt-4o"));
     }
 
+    private static void PromptOpenAi(GraphifyConfig config)
+    {
+        AnsiConsole.Write(new Rule("[bold cyan]OpenAI-Compatible Endpoint Settings[/]").RuleStyle("cyan"));
+        AnsiConsole.WriteLine();
+
+        config.OpenAi.Endpoint = AnsiConsole.Prompt(
+            new TextPrompt<string>("[green]Endpoint URL:[/]")
+                .Validate(v => !string.IsNullOrWhiteSpace(v)
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("Endpoint is required"))
+                .DefaultValue(config.OpenAi.Endpoint ?? "https://api.openai.com/v1"));
+
+        config.OpenAi.ApiKey = AnsiConsole.Prompt(
+            new TextPrompt<string>("[green]API Key:[/]")
+                .Secret()
+                .Validate(v => !string.IsNullOrWhiteSpace(v)
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("API key is required")));
+
+        config.OpenAi.ModelId = AnsiConsole.Prompt(
+            new TextPrompt<string>("[green]Model ID:[/]")
+                .Validate(v => !string.IsNullOrWhiteSpace(v)
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("Model ID is required"))
+                .DefaultValue(config.OpenAi.ModelId ?? "gpt-4o"));
+    }
+
     private static void PromptOllama(GraphifyConfig config)
     {
         AnsiConsole.Write(new Rule("[bold cyan]Ollama Settings[/]").RuleStyle("cyan"));
@@ -140,6 +172,11 @@ public static class ConfigWizard
                 table.AddRow("API Key", MaskSecret(config.AzureOpenAI.ApiKey));
                 table.AddRow("Deployment", config.AzureOpenAI.DeploymentName ?? "(not set)");
                 table.AddRow("Model", config.AzureOpenAI.ModelId ?? "(not set)");
+                break;
+            case "openai":
+                table.AddRow("Endpoint", config.OpenAi.Endpoint ?? "(not set)");
+                table.AddRow("API Key", MaskSecret(config.OpenAi.ApiKey));
+                table.AddRow("Model", config.OpenAi.ModelId ?? "(not set)");
                 break;
             case "ollama":
                 table.AddRow("Endpoint", config.Ollama.Endpoint);

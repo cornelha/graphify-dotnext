@@ -155,6 +155,33 @@ public class ConfigPersistenceTests : IDisposable
         Assert.Equal("gpt-4.1", loaded.CopilotSdk.ModelId);
     }
 
+    // ── Round-trip: OpenAI ─────────────────────────
+
+    [Fact]
+    public void Save_Load_RoundTrip_OpenAi()
+    {
+        var original = new GraphifyConfig
+        {
+            Provider = "openai",
+            OpenAi = new OpenAIConfig
+            {
+                Endpoint = "https://api.openai.com/v1",
+                ApiKey = "sk-test-key-12345",
+                ModelId = "gpt-4o"
+            }
+        };
+
+        ConfigPersistence.Save(original);
+        var loaded = ConfigPersistence.Load();
+
+        Assert.NotNull(loaded);
+        Assert.Equal("openai", loaded.Provider);
+        Assert.Equal("https://api.openai.com/v1", loaded.OpenAi.Endpoint);
+        // API key is stored in user-secrets, not in JSON
+        Assert.Null(loaded.OpenAi.ApiKey);
+        Assert.Equal("gpt-4o", loaded.OpenAi.ModelId);
+    }
+
     // ── Round-trip: Null provider (AST-only) ──────────────────────────
 
     [Fact]
@@ -246,6 +273,8 @@ public class ConfigPersistenceTests : IDisposable
 
         Assert.True(graphify.TryGetProperty("AzureOpenAI", out _),
             "Azure config should have AzureOpenAI section");
+        Assert.False(graphify.TryGetProperty("OpenAi", out _),
+            "Azure config should NOT have OpenAi section");
         Assert.False(graphify.TryGetProperty("Ollama", out _),
             "Azure config should NOT have Ollama section");
         Assert.False(graphify.TryGetProperty("CopilotSdk", out _),
@@ -273,6 +302,8 @@ public class ConfigPersistenceTests : IDisposable
 
         Assert.True(graphify.TryGetProperty("Ollama", out _),
             "Ollama config should have Ollama section");
+        Assert.False(graphify.TryGetProperty("OpenAi", out _),
+            "Ollama config should NOT have OpenAi section");
         Assert.False(graphify.TryGetProperty("AzureOpenAI", out _),
             "Ollama config should NOT have AzureOpenAI section");
         Assert.False(graphify.TryGetProperty("CopilotSdk", out _),
@@ -296,6 +327,8 @@ public class ConfigPersistenceTests : IDisposable
 
         Assert.True(graphify.TryGetProperty("CopilotSdk", out _),
             "CopilotSdk config should have CopilotSdk section");
+        Assert.False(graphify.TryGetProperty("OpenAi", out _),
+            "CopilotSdk config should NOT have OpenAi section");
         Assert.False(graphify.TryGetProperty("AzureOpenAI", out _),
             "CopilotSdk config should NOT have AzureOpenAI section");
         Assert.False(graphify.TryGetProperty("Ollama", out _),

@@ -54,7 +54,7 @@ static void AddPipelineOptions(Command cmd,
     };
     providerOpt = new Option<string?>("--provider", "-p")
     {
-        Description = "AI provider: azureopenai, ollama, copilotsdk"
+        Description = "AI provider: azureopenai, ollama, openai, copilotsdk"
     };
     endpointOpt = new Option<string?>("--endpoint")
     {
@@ -145,7 +145,7 @@ static async Task<(IChatClient? chatClient, bool verbose)> ResolveProviderAsync(
 
             // Data privacy warning for cloud AI providers
             var provider = graphifyConfig.Provider?.ToLowerInvariant();
-            if (provider == "azureopenai" || provider == "copilotsdk")
+            if (provider == "azureopenai" || provider == "openai" || provider == "copilotsdk")
             {
                 Console.WriteLine($"\u26a0\ufe0f  Note: Source code contents will be sent to {graphifyConfig.Provider} for semantic analysis. Use --provider ast for local-only analysis.");
             }
@@ -656,6 +656,15 @@ static void ShowStyledConfig()
     azureTable.AddRow("Model", FormatValue(config.AzureOpenAI.ModelId));
     azureTable.AddRow("API Key", MaskSecret(config.AzureOpenAI.ApiKey));
     AnsiConsole.Write(azureTable);
+
+    // OpenAI section
+    var openAiTable = new Table().Border(TableBorder.Simple).Title("[bold cyan]OpenAI[/]");
+    openAiTable.AddColumn("[bold]Setting[/]");
+    openAiTable.AddColumn("[bold]Value[/]");
+    openAiTable.AddRow("Endpoint", FormatValue(config.OpenAi.Endpoint));
+    openAiTable.AddRow("Model", FormatValue(config.OpenAi.ModelId));
+    openAiTable.AddRow("API Key", MaskSecret(config.OpenAi.ApiKey));
+    AnsiConsole.Write(openAiTable);
 
     // Ollama section
     var ollamaTable = new Table().Border(TableBorder.Simple).Title("[bold cyan]Ollama[/]");
