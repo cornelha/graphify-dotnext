@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Graphify.Cli.Configuration;
+using Graphify.Cli.Init;
 using Graphify.Cli.Mcp;
 using Graphify.Graph;
 using Graphify.Models;
@@ -12,6 +13,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Spectre.Console;
+using SurrealDb.Embedded.RocksDb;
+using SurrealDb.Net;
+using SurrealDb.Net.Models.Auth;
 
 var rootCommand = new RootCommand("graphify-dotnet: AI-powered knowledge graph builder for codebases");
 
@@ -309,6 +313,54 @@ benchmarkCommand.SetAction(async (parseResult, cancellationToken) =>
 
 rootCommand.Subcommands.Add(benchmarkCommand);
 
+// ── init command ─────────────────────────────────────────────────────────
+var initInstallOpt = new Option<string?>("--install")
+{
+    Description = "Target specific agents (comma-separated, e.g. copilot,claude)"
+};
+
+var initUninstallOpt = new Option<bool>("--uninstall")
+{
+    Description = "Remove graphify instructions from all agent files"
+};
+
+var initForceOpt = new Option<bool>("--force")
+{
+    Description = "Regenerate even if already installed"
+};
+
+var initScopeOpt = new Option<string>("--scope")
+{
+    Description = "Scope of installation: project (default) or global",
+    DefaultValueFactory = _ => "project"
+};
+
+var initCommand = new Command("init", "Install MCP agent instructions for coding agents");
+initCommand.Options.Add(initInstallOpt);
+initCommand.Options.Add(initUninstallOpt);
+initCommand.Options.Add(initForceOpt);
+initCommand.Options.Add(initScopeOpt);
+
+initCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    var projectDir = Directory.GetCurrentDirectory();
+    var install = parseResult.GetValue(initInstallOpt);
+    var uninstall = parseResult.GetValue(initUninstallOpt);
+    var force = parseResult.GetValue(initForceOpt);
+    var scope = parseResult.GetValue(initScopeOpt);
+
+    var initService = new InitService(Console.Out, projectDir);
+
+    if (uninstall)
+    {
+        return await initService.RunAsync(uninstall: true);
+    }
+
+    return await initService.RunAsync(install, force: force);
+});
+
+rootCommand.Subcommands.Add(initCommand);
+
 // ── serve command ────────────────────────────────────────────────────────
 var servePathArg = new Argument<string>("graph-path")
 {
@@ -321,14 +373,56 @@ var serveVerboseOpt = new Option<bool>("--verbose", "-v")
     Description = "Enable verbose logging"
 };
 
+var serveSurrealPathOpt = new Option<string?>("--surreal-path")
+{
+    Description = "Path to embedded SurrealDB RocksDB file (e.g., graphify-out/codebase.db)"
+};
+
+var serveSurrealEndpointOpt = new Option<string?>("--surreal-endpoint")
+{
+    Description = "Remote SurrealDB endpoint (e.g., http://localhost:8000)"
+};
+
+var serveSurrealUserOpt = new Option<string?>("--surreal-user")
+{
+    Description = "SurrealDB username (default: root)"
+};
+
+var serveSurrealPassOpt = new Option<string?>("--surreal-pass")
+{
+    Description = "SurrealDB password"
+};
+
+var serveSurrealNsOpt = new Option<string?>("--surreal-ns")
+{
+    Description = "SurrealDB namespace (default: graphify)"
+};
+
+var serveSurrealDbOpt = new Option<string?>("--surreal-db")
+{
+    Description = "SurrealDB database name (default: codebase)"
+};
+
 var serveCommand = new Command("serve", "Serve the knowledge graph over MCP (Model Context Protocol)");
 serveCommand.Arguments.Add(servePathArg);
 serveCommand.Options.Add(serveVerboseOpt);
+serveCommand.Options.Add(serveSurrealPathOpt);
+serveCommand.Options.Add(serveSurrealEndpointOpt);
+serveCommand.Options.Add(serveSurrealUserOpt);
+serveCommand.Options.Add(serveSurrealPassOpt);
+serveCommand.Options.Add(serveSurrealNsOpt);
+serveCommand.Options.Add(serveSurrealDbOpt);
 
 serveCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     var graphPath = parseResult.GetValue(servePathArg)!;
     var verbose = parseResult.GetValue(serveVerboseOpt);
+    var surrealPath = parseResult.GetValue(serveSurrealPathOpt);
+    var surrealEndpoint = parseResult.GetValue(serveSurrealEndpointOpt);
+    var surrealUser = parseResult.GetValue(serveSurrealUserOpt);
+    var surrealPass = parseResult.GetValue(serveSurrealPassOpt);
+    var surrealNs = parseResult.GetValue(serveSurrealNsOpt);
+    var surrealDb = parseResult.GetValue(serveSurrealDbOpt);
 
     var builder = Host.CreateApplicationBuilder(args);
 
@@ -338,48 +432,101 @@ serveCommand.SetAction(async (parseResult, cancellationToken) =>
         options.LogToStandardErrorThreshold = verbose ? LogLevel.Trace : LogLevel.Warning;
     });
 
-    KnowledgeGraph graph;
-    try
+    if (surrealEndpoint is not null || surrealPath is not null)
     {
-        if (!File.Exists(graphPath))
+        // ── SurrealDB mode ────────────────────────────────────────────
+        try
         {
-            await Console.Error.WriteLineAsync($"Error: Graph file not found at '{graphPath}'");
+            ISurrealDbClient db;
+
+            if (surrealPath is not null)
+            {
+                db = new SurrealDbRocksDbClient(surrealPath);
+            }
+            else
+            {
+                var options = SurrealDbOptions.Create()
+                    .WithEndpoint(surrealEndpoint!)
+                    .WithNamespace(surrealNs ?? "graphify")
+                    .WithDatabase(surrealDb ?? "codebase")
+                    .WithUsername(surrealUser)
+                    .WithPassword(surrealPass)
+                    .Build();
+
+                db = new SurrealDbClient(options);
+
+                if (surrealUser is not null)
+                {
+                    await db.SignIn(new RootAuth
+                    {
+                        Username = surrealUser,
+                        Password = surrealPass ?? ""
+                    });
+                }
+            }
+
+            builder.Services.AddSingleton<ISurrealDbClient>(db);
+            builder.Services.AddSingleton<IGraphBackend, SurrealDbGraphBackend>();
+
+            if (verbose)
+            {
+                await Console.Error.WriteLineAsync($"SurrealDB backend: {(surrealPath ?? surrealEndpoint)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"Error connecting to SurrealDB: {ex.Message}");
             return 1;
         }
-
-        var json = await File.ReadAllTextAsync(graphPath, cancellationToken);
-        var graphData = JsonSerializer.Deserialize<GraphJsonData>(json);
-
-        if (graphData == null)
+    }
+    else
+    {
+        // ── JSON file mode (existing behavior) ────────────────────────
+        KnowledgeGraph graph;
+        try
         {
-            await Console.Error.WriteLineAsync($"Error: Failed to parse graph JSON from '{graphPath}'");
+            if (!File.Exists(graphPath))
+            {
+                await Console.Error.WriteLineAsync($"Error: Graph file not found at '{graphPath}'");
+                return 1;
+            }
+
+            var json = await File.ReadAllTextAsync(graphPath, cancellationToken);
+            var graphData = JsonSerializer.Deserialize<GraphJsonData>(json);
+
+            if (graphData == null)
+            {
+                await Console.Error.WriteLineAsync($"Error: Failed to parse graph JSON from '{graphPath}'");
+                return 1;
+            }
+
+            graph = new KnowledgeGraph();
+
+            foreach (var node in graphData.Nodes)
+            {
+                graph.AddNode(node);
+            }
+
+            foreach (var edge in graphData.Edges)
+            {
+                graph.AddEdge(edge);
+            }
+
+            if (verbose)
+            {
+                await Console.Error.WriteLineAsync($"Loaded graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges");
+            }
+
+            builder.Services.AddSingleton(graph);
+            builder.Services.AddSingleton<IGraphBackend>(new MemoryGraphBackend(graph));
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"Error loading graph: {ex.Message}");
             return 1;
         }
-
-        graph = new KnowledgeGraph();
-
-        foreach (var node in graphData.Nodes)
-        {
-            graph.AddNode(node);
-        }
-
-        foreach (var edge in graphData.Edges)
-        {
-            graph.AddEdge(edge);
-        }
-
-        if (verbose)
-        {
-            await Console.Error.WriteLineAsync($"Loaded graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges");
-        }
-    }
-    catch (Exception ex)
-    {
-        await Console.Error.WriteLineAsync($"Error loading graph: {ex.Message}");
-        return 1;
     }
 
-    builder.Services.AddSingleton(graph);
     builder.Services.AddSingleton<GraphTools>();
     builder.Services.AddMcpServer()
         .WithStdioServerTransport()
