@@ -174,6 +174,7 @@ Select **🔧 Set up AI provider** and choose one:
 | Provider | Setup |
 |----------|-------|
 | **Ollama** (local, free) | Install [Ollama](https://ollama.com), pull a model: `ollama pull llama3.2` |
+| **OpenAI (compatible)** | Any OpenAI-compatible service — configure endpoint, API key, model |
 | **Azure OpenAI** (cloud) | Need endpoint URL, API key, deployment name |
 | **GitHub Copilot SDK** | Zero config for Copilot subscribers |
 
