@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using Graphify.Graph;
 using Graphify.Models;
 using ModelContextProtocol.Server;
@@ -9,316 +8,64 @@ namespace Graphify.Cli.Mcp;
 [McpServerToolType]
 public class GraphTools
 {
-    private readonly KnowledgeGraph _graph;
+    private readonly IGraphBackend _backend;
 
-    public GraphTools(KnowledgeGraph graph)
+    public GraphTools(IGraphBackend backend)
     {
-        _graph = graph ?? throw new ArgumentNullException(nameof(graph));
+        _backend = backend ?? throw new ArgumentNullException(nameof(backend));
     }
 
     [McpServerTool]
     [Description("Search nodes and edges by name, label, or type.")]
-    public string Query(
+    public async Task<string> Query(
         [Description("Match against node ID, label, or type")]
         string searchTerm,
         [Description("Max results (default 10)")]
-        int limit = 10)
+        int limit = 10,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(searchTerm))
-        {
-            return JsonSerializer.Serialize(new { error = "Search term cannot be empty" });
-        }
-
-        var searchLower = searchTerm.ToLowerInvariant();
-        var matchingNodes = _graph.GetNodes()
-            .Where(n => n.Id.ToLowerInvariant().Contains(searchLower) ||
-                       n.Label.ToLowerInvariant().Contains(searchLower) ||
-                       n.Type.ToLowerInvariant().Contains(searchLower))
-            .Take(limit)
-            .Select(n => new
-            {
-                id = n.Id,
-                label = n.Label,
-                type = n.Type,
-                filePath = n.FilePath,
-                language = n.Language,
-                confidence = n.Confidence.ToString(),
-                community = n.Community,
-                degree = _graph.GetDegree(n.Id),
-                connections = _graph.GetEdges(n.Id)
-                    .Select(e => new
-                    {
-                        source = e.Source.Id,
-                        target = e.Target.Id,
-                        relationship = e.Relationship,
-                        weight = e.Weight
-                    })
-                    .Take(5)
-                    .ToList()
-            })
-            .ToList();
-
-        return JsonSerializer.Serialize(new
-        {
-            query = searchTerm,
-            resultCount = matchingNodes.Count,
-            results = matchingNodes
-        });
+        return await _backend.QueryAsync(searchTerm, limit, cancellationToken);
     }
 
     [McpServerTool]
     [Description("Shortest path between two nodes.")]
-    public string Path(
+    public async Task<string> Path(
         [Description("Start node ID")]
         string sourceId,
         [Description("End node ID")]
-        string targetId)
+        string targetId,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(targetId))
-        {
-            return JsonSerializer.Serialize(new { error = "Source and target IDs are required" });
-        }
-
-        var sourceNode = _graph.GetNode(sourceId);
-        var targetNode = _graph.GetNode(targetId);
-
-        if (sourceNode == null)
-        {
-            return JsonSerializer.Serialize(new { error = $"Source node '{sourceId}' not found" });
-        }
-
-        if (targetNode == null)
-        {
-            return JsonSerializer.Serialize(new { error = $"Target node '{targetId}' not found" });
-        }
-
-        try
-        {
-            var visited = new HashSet<string>();
-            var queue = new Queue<(GraphNode Node, List<GraphNode> Path)>();
-            queue.Enqueue((sourceNode, new List<GraphNode> { sourceNode }));
-            visited.Add(sourceNode.Id);
-
-            while (queue.Count > 0)
-            {
-                var (current, path) = queue.Dequeue();
-
-                if (current.Id == targetNode.Id)
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        found = true,
-                        pathLength = path.Count - 1,
-                        path = path.Select(n => new
-                        {
-                            id = n.Id,
-                            label = n.Label,
-                            type = n.Type
-                        }).ToList()
-                    });
-                }
-
-                foreach (var neighbor in _graph.GetNeighbors(current.Id))
-                {
-                    if (!visited.Contains(neighbor.Id))
-                    {
-                        visited.Add(neighbor.Id);
-                        var newPath = new List<GraphNode>(path) { neighbor };
-                        queue.Enqueue((neighbor, newPath));
-                    }
-                }
-            }
-
-            return JsonSerializer.Serialize(new
-            {
-                found = false
-            });
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new
-            {
-                error = $"Error finding path: {ex.Message}"
-            });
-        }
+        return await _backend.PathAsync(sourceId, targetId, cancellationToken);
     }
 
     [McpServerTool]
     [Description("Node details with all connections.")]
-    public string Explain(
+    public async Task<string> Explain(
         [Description("Node ID")]
-        string nodeId)
+        string nodeId,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(nodeId))
-        {
-            return JsonSerializer.Serialize(new { error = "Node ID is required" });
-        }
-
-        var node = _graph.GetNode(nodeId);
-        if (node == null)
-        {
-            return JsonSerializer.Serialize(new { error = $"Node '{nodeId}' not found" });
-        }
-
-        var inEdges = _graph.GetEdges(nodeId).Where(e => e.Target.Id == nodeId).ToList();
-        var outEdges = _graph.GetEdges(nodeId).Where(e => e.Source.Id == nodeId).ToList();
-        var degree = _graph.GetDegree(nodeId);
-
-        var explanation = new
-        {
-            node = new
-            {
-                id = node.Id,
-                label = node.Label,
-                type = node.Type,
-                filePath = node.FilePath,
-                language = node.Language,
-                confidence = node.Confidence.ToString(),
-                community = node.Community
-            },
-            statistics = new
-            {
-                totalDegree = degree,
-                incomingConnections = inEdges.Count,
-                outgoingConnections = outEdges.Count
-            },
-            incomingEdges = inEdges.Select(e => new
-            {
-                from = e.Source.Id,
-                fromLabel = e.Source.Label,
-                relationship = e.Relationship,
-                confidence = e.Confidence.ToString()
-            }).ToList(),
-            outgoingEdges = outEdges.Select(e => new
-            {
-                to = e.Target.Id,
-                toLabel = e.Target.Label,
-                relationship = e.Relationship,
-                confidence = e.Confidence.ToString()
-            }).ToList()
-        };
-
-        return JsonSerializer.Serialize(explanation);
+        return await _backend.ExplainAsync(nodeId, cancellationToken);
     }
 
     [McpServerTool]
     [Description("List communities and their members.")]
-    public string Communities(
+    public async Task<string> Communities(
         [Description("Specific community (omit for all)")]
-        int? communityId = null)
+        int? communityId = null,
+        CancellationToken cancellationToken = default)
     {
-        var allNodes = _graph.GetNodes().ToList();
-        var nodesWithCommunities = allNodes.Where(n => n.Community.HasValue).ToList();
-
-        if (communityId.HasValue)
-        {
-            var communityNodes = _graph.GetNodesByCommunity(communityId.Value).ToList();
-
-            if (!communityNodes.Any())
-            {
-                return JsonSerializer.Serialize(new { error = $"Community {communityId} not found or has no members" });
-            }
-
-            return JsonSerializer.Serialize(new
-            {
-                communityId = communityId.Value,
-                memberCount = communityNodes.Count,
-                members = communityNodes.Select(n => new
-                {
-                    id = n.Id,
-                    label = n.Label,
-                    type = n.Type,
-                    filePath = n.FilePath,
-                    degree = _graph.GetDegree(n.Id)
-                }).OrderByDescending(n => n.degree).ToList()
-            });
-        }
-
-        var communities = nodesWithCommunities
-            .GroupBy(n => n.Community!.Value)
-            .Select(g => new
-            {
-                communityId = g.Key,
-                memberCount = g.Count(),
-                topMembers = g.OrderByDescending(n => _graph.GetDegree(n.Id))
-                    .Take(5)
-                    .Select(n => new
-                    {
-                        id = n.Id,
-                        label = n.Label,
-                        type = n.Type,
-                        degree = _graph.GetDegree(n.Id)
-                    })
-                    .ToList()
-            })
-            .OrderByDescending(c => c.memberCount)
-            .ToList();
-
-        return JsonSerializer.Serialize(new
-        {
-            totalCommunities = communities.Count,
-            nodesInCommunities = nodesWithCommunities.Count,
-            nodesWithoutCommunity = allNodes.Count - nodesWithCommunities.Count,
-            communities
-        });
+        return await _backend.CommunitiesAsync(communityId, cancellationToken);
     }
 
     [McpServerTool]
     [Description("Graph-wide statistics and structure.")]
-    public string Analyze(
+    public async Task<string> Analyze(
         [Description("Top nodes to include (default 10)")]
-        int topN = 10)
+        int topN = 10,
+        CancellationToken cancellationToken = default)
     {
-        var allNodes = _graph.GetNodes().ToList();
-        var allEdges = _graph.GetEdges().ToList();
-
-        if (!allNodes.Any())
-        {
-            return JsonSerializer.Serialize(new { error = "Graph is empty" });
-        }
-
-        var topNodesByDegree = _graph.GetHighestDegreeNodes(topN).ToList();
-
-        var nodesByCommunity = allNodes.Where(n => n.Community.HasValue)
-            .GroupBy(n => n.Community!.Value)
-            .Count();
-
-        var isolatedNodes = allNodes.Where(n => _graph.GetDegree(n.Id) == 0).ToList();
-
-        var nodesByType = allNodes.GroupBy(n => n.Type)
-            .Select(g => new { type = g.Key, count = g.Count() })
-            .OrderByDescending(x => x.count)
-            .ToList();
-
-        var edgesByRelationship = allEdges.GroupBy(e => e.Relationship)
-            .Select(g => new { relationship = g.Key, count = g.Count() })
-            .OrderByDescending(x => x.count)
-            .ToList();
-
-        var averageDegree = allNodes.Any() ? allNodes.Average(n => _graph.GetDegree(n.Id)) : 0;
-
-        var analysis = new
-        {
-            statistics = new
-            {
-                nodeCount = allNodes.Count,
-                edgeCount = allEdges.Count,
-                communityCount = nodesByCommunity,
-                averageDegree = Math.Round(averageDegree, 2),
-                isolatedNodeCount = isolatedNodes.Count
-            },
-            topNodes = topNodesByDegree.Select(t => new
-            {
-                id = t.Node.Id,
-                label = t.Node.Label,
-                type = t.Node.Type,
-                degree = t.Degree,
-                community = t.Node.Community
-            }).ToList(),
-            nodeTypes = nodesByType,
-            relationshipTypes = edgesByRelationship
-        };
-
-        return JsonSerializer.Serialize(analysis);
+        return await _backend.AnalyzeAsync(topN, cancellationToken);
     }
 }
