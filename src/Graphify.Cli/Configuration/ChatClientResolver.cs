@@ -15,7 +15,7 @@ public static class ChatClientResolver
 
         if (!Enum.TryParse<AiProvider>(config.Provider, ignoreCase: true, out var provider))
             throw new InvalidOperationException(
-                $"Unknown AI provider: '{config.Provider}'. Supported: azureopenai, ollama, copilotsdk");
+                $"Unknown AI provider: '{config.Provider}'. Supported: azureopenai, ollama, openai, copilotsdk");
 
         var options = provider switch
         {
@@ -25,6 +25,12 @@ public static class ChatClientResolver
                 ApiKey: config.AzureOpenAI.ApiKey,
                 ModelId: config.AzureOpenAI.ModelId,
                 DeploymentName: config.AzureOpenAI.DeploymentName),
+
+            AiProvider.OpenAi => new AiProviderOptions(
+                Provider: AiProvider.OpenAi,
+                Endpoint: config.OpenAi.Endpoint,
+                ApiKey: config.OpenAi.ApiKey,
+                ModelId: config.OpenAi.ModelId),
 
             AiProvider.Ollama => new AiProviderOptions(
                 Provider: AiProvider.Ollama,
@@ -57,7 +63,7 @@ public static class ChatClientResolver
 
         if (!Enum.TryParse<AiProvider>(config.Provider, ignoreCase: true, out var provider))
             throw new InvalidOperationException(
-                $"Unknown AI provider: '{config.Provider}'. Supported: azureopenai, ollama, copilotsdk");
+                $"Unknown AI provider: '{config.Provider}'. Supported: azureopenai, ollama, openai, copilotsdk");
 
         var options = provider switch
         {
@@ -67,6 +73,12 @@ public static class ChatClientResolver
                 ApiKey: config.AzureOpenAI.ApiKey,
                 ModelId: config.AzureOpenAI.ModelId,
                 DeploymentName: config.AzureOpenAI.DeploymentName),
+
+            AiProvider.OpenAi => new AiProviderOptions(
+                Provider: AiProvider.OpenAi,
+                Endpoint: config.OpenAi.Endpoint,
+                ApiKey: config.OpenAi.ApiKey,
+                ModelId: config.OpenAi.ModelId),
 
             AiProvider.Ollama => new AiProviderOptions(
                 Provider: AiProvider.Ollama,

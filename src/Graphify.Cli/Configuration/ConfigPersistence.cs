@@ -32,7 +32,7 @@ public static class ConfigPersistence
         // Persist API key separately via user-secrets (never write it to JSON)
         if (!string.IsNullOrWhiteSpace(config.AzureOpenAI.ApiKey))
         {
-            var stored = StoreApiKeyInUserSecrets(config.AzureOpenAI.ApiKey);
+            var stored = StoreApiKeyInUserSecrets("AzureOpenAI", config.AzureOpenAI.ApiKey);
             if (stored)
             {
                 AnsiConsole.MarkupLine("[green]🔑 API key stored securely via dotnet user-secrets.[/]");
@@ -41,6 +41,21 @@ public static class ConfigPersistence
             {
                 AnsiConsole.MarkupLine("[yellow]⚠️  Could not store API key in user-secrets. " +
                     "Run 'dotnet user-secrets set \"Graphify:AzureOpenAI:ApiKey\" \"<your-key>\"' manually.[/]");
+            }
+        }
+
+        // Store OpenAI API key in user-secrets if set
+        if (!string.IsNullOrWhiteSpace(config.OpenAi.ApiKey))
+        {
+            var stored = StoreApiKeyInUserSecrets("OpenAi", config.OpenAi.ApiKey);
+            if (stored)
+            {
+                AnsiConsole.MarkupLine("[green]🔑 OpenAI API key stored securely via dotnet user-secrets.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]⚠️  Could not store OpenAI API key in user-secrets. " +
+                    "Run 'dotnet user-secrets set \"Graphify:OpenAi:ApiKey\" \"<your-key>\"' manually.[/]");
             }
         }
 
@@ -97,14 +112,14 @@ public static class ConfigPersistence
     /// <summary>
     /// Stores the API key securely using dotnet user-secrets.
     /// </summary>
-    private static bool StoreApiKeyInUserSecrets(string apiKey)
+    private static bool StoreApiKeyInUserSecrets(string sectionName, string apiKey)
     {
         try
         {
             var startInfo = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                Arguments = $"user-secrets set \"Graphify:AzureOpenAI:ApiKey\" \"{apiKey}\" --id \"{UserSecretsId}\"",
+                Arguments = $"user-secrets set \"Graphify:{sectionName}:ApiKey\" \"{apiKey}\" --id \"{UserSecretsId}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -145,6 +160,14 @@ public static class ConfigPersistence
                     config.AzureOpenAI.Endpoint,
                     config.AzureOpenAI.DeploymentName,
                     config.AzureOpenAI.ModelId
+                };
+                break;
+            case "openai":
+                // API key is stored in user-secrets, NOT in the JSON file
+                result["OpenAi"] = new
+                {
+                    config.OpenAi.Endpoint,
+                    config.OpenAi.ModelId
                 };
                 break;
             case "ollama":
