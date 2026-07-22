@@ -40,17 +40,26 @@ public static class ConfigurationFactory
             {
                 if (cliOptions.Provider?.Equals("ollama", StringComparison.OrdinalIgnoreCase) == true)
                     overrides["Graphify:Ollama:Endpoint"] = cliOptions.Endpoint;
+                else if (cliOptions.Provider?.Equals("openai", StringComparison.OrdinalIgnoreCase) == true)
+                    overrides["Graphify:OpenAi:Endpoint"] = cliOptions.Endpoint;
                 else if (cliOptions.Provider?.Equals("copilotsdk", StringComparison.OrdinalIgnoreCase) != true)
                     overrides["Graphify:AzureOpenAI:Endpoint"] = cliOptions.Endpoint;
             }
 
             if (cliOptions.ApiKey != null)
-                overrides["Graphify:AzureOpenAI:ApiKey"] = cliOptions.ApiKey;
+            {
+                if (cliOptions.Provider?.Equals("openai", StringComparison.OrdinalIgnoreCase) == true)
+                    overrides["Graphify:OpenAi:ApiKey"] = cliOptions.ApiKey;
+                else
+                    overrides["Graphify:AzureOpenAI:ApiKey"] = cliOptions.ApiKey;
+            }
 
             if (cliOptions.Model != null)
             {
                 if (cliOptions.Provider?.Equals("ollama", StringComparison.OrdinalIgnoreCase) == true)
                     overrides["Graphify:Ollama:ModelId"] = cliOptions.Model;
+                else if (cliOptions.Provider?.Equals("openai", StringComparison.OrdinalIgnoreCase) == true)
+                    overrides["Graphify:OpenAi:ModelId"] = cliOptions.Model;
                 else if (cliOptions.Provider?.Equals("copilotsdk", StringComparison.OrdinalIgnoreCase) == true)
                     overrides["Graphify:CopilotSdk:ModelId"] = cliOptions.Model;
                 else

@@ -1,7 +1,10 @@
 using System.CommandLine;
 using System.Text.Json;
+using DotNetEnv;
 using Graphify.Cli.Configuration;
+using Graphify.Cli.Init;
 using Graphify.Cli.Mcp;
+using Graphify.Export;
 using Graphify.Graph;
 using Graphify.Models;
 using Graphify.Pipeline;
@@ -12,6 +15,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using Spectre.Console;
+using SurrealDb.Embedded.RocksDb;
+using SurrealDb.Net;
+using SurrealDb.Net.Models.Auth;
+
+Env.Load();
 
 var rootCommand = new RootCommand("graphify-dotnet: AI-powered knowledge graph builder for codebases");
 
@@ -50,7 +58,7 @@ static void AddPipelineOptions(Command cmd,
     };
     providerOpt = new Option<string?>("--provider", "-p")
     {
-        Description = "AI provider: azureopenai, ollama, copilotsdk"
+        Description = "AI provider: azureopenai, ollama, openai, copilotsdk"
     };
     endpointOpt = new Option<string?>("--endpoint")
     {
@@ -141,7 +149,7 @@ static async Task<(IChatClient? chatClient, bool verbose)> ResolveProviderAsync(
 
             // Data privacy warning for cloud AI providers
             var provider = graphifyConfig.Provider?.ToLowerInvariant();
-            if (provider == "azureopenai" || provider == "copilotsdk")
+            if (provider == "azureopenai" || provider == "openai" || provider == "copilotsdk")
             {
                 Console.WriteLine($"\u26a0\ufe0f  Note: Source code contents will be sent to {graphifyConfig.Provider} for semantic analysis. Use --provider ast for local-only analysis.");
             }
@@ -183,24 +191,9 @@ runCommand.SetAction(async (parseResult, cancellationToken) =>
     var path = parseResult.GetValue(runPathArg)!;
     var output = parseResult.GetValue(runOutputOpt)!;
     var format = parseResult.GetValue(runFormatOpt)!;
-    var formats = format.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     var useConfigWizard = parseResult.GetValue(runConfigOpt);
 
-    // Apply saved config defaults when CLI arguments are at their default values
-    var savedConfig = ConfigPersistence.Load();
-    if (savedConfig != null)
-    {
-        if (path == "." && savedConfig.WorkingFolder != null)
-            path = savedConfig.WorkingFolder;
-        if (output == "graphify-out" && savedConfig.OutputFolder != null)
-            output = savedConfig.OutputFolder;
-        if (format == "json,html,report" && savedConfig.ExportFormats != null)
-        {
-            format = savedConfig.ExportFormats;
-            formats = format.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
-    }
-
+    // ── Optionally run config wizard (saves to appsettings.local.json) ─────
     if (useConfigWizard)
     {
         var existingConfig = ConfigPersistence.Load();
@@ -209,10 +202,7 @@ runCommand.SetAction(async (parseResult, cancellationToken) =>
         AnsiConsole.WriteLine();
     }
 
-    var (chatClient, verbose) = await ResolveProviderAsync(parseResult,
-        runVerboseOpt, runProviderOpt, runEndpointOpt, runApiKeyOpt, runModelOpt, runDeploymentOpt,
-        ignoreProviderOptions: useConfigWizard);
-
+    // ── Build configuration from all sources ─────────────────────────────
     var surrealOptions = new CliSurrealOptions
     {
         Endpoint = parseResult.GetValue(runSurrealEndpointOpt),
@@ -226,6 +216,26 @@ runCommand.SetAction(async (parseResult, cancellationToken) =>
     var graphifyConfig = new GraphifyConfig();
     configuration.GetSection("Graphify").Bind(graphifyConfig);
 
+    // ── Resolve export formats with proper priority ────────────────────────
+    // CLI --format > config (.env, user-secrets, saved) > built-in default
+    if (format == "json,html,report" && graphifyConfig.ExportFormats != null)
+    {
+        format = graphifyConfig.ExportFormats;
+    }
+    var formats = format.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    // Apply config-sourced defaults when CLI args are at their defaults
+    if (path == "." && graphifyConfig.WorkingFolder != null)
+        path = graphifyConfig.WorkingFolder;
+    if (output == "graphify-out" && graphifyConfig.OutputFolder != null)
+        output = graphifyConfig.OutputFolder;
+
+    // ── Resolve AI provider ──────────────────────────────────────────────
+    var (chatClient, verbose) = await ResolveProviderAsync(parseResult,
+        runVerboseOpt, runProviderOpt, runEndpointOpt, runApiKeyOpt, runModelOpt, runDeploymentOpt,
+        ignoreProviderOptions: useConfigWizard);
+
+    // ── Run pipeline ──────────────────────────────────────────────────────
     var runner = new Graphify.Cli.PipelineRunner(Console.Out, verbose, chatClient, graphifyConfig.SurrealDb);
     var graph = await runner.RunAsync(path, output, formats, useCache: true, cancellationToken);
     return graph != null ? 0 : 1;
@@ -251,11 +261,8 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     var path = parseResult.GetValue(watchPathArg)!;
     var output = parseResult.GetValue(watchOutputOpt)!;
     var format = parseResult.GetValue(watchFormatOpt)!;
-    var formats = format.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    var (chatClient, verbose) = await ResolveProviderAsync(parseResult,
-        watchVerboseOpt, watchProviderOpt, watchEndpointOpt, watchApiKeyOpt, watchModelOpt, watchDeploymentOpt);
-
+    // ── Build configuration from all sources ─────────────────────────────
     var surrealOptions = new CliSurrealOptions
     {
         Endpoint = parseResult.GetValue(watchSurrealEndpointOpt),
@@ -269,6 +276,19 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     var graphifyConfig = new GraphifyConfig();
     configuration.GetSection("Graphify").Bind(graphifyConfig);
 
+    // ── Resolve export formats with proper priority ────────────────────────
+    // CLI --format > config (.env, user-secrets, saved) > built-in default
+    if (format == "json,html,report" && graphifyConfig.ExportFormats != null)
+    {
+        format = graphifyConfig.ExportFormats;
+    }
+    var formats = format.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    // ── Resolve AI provider ──────────────────────────────────────────────
+    var (chatClient, verbose) = await ResolveProviderAsync(parseResult,
+        watchVerboseOpt, watchProviderOpt, watchEndpointOpt, watchApiKeyOpt, watchModelOpt, watchDeploymentOpt);
+
+    // ── Run pipeline ──────────────────────────────────────────────────────
     Console.WriteLine("Running initial pipeline...");
     Console.WriteLine();
     var runner = new Graphify.Cli.PipelineRunner(Console.Out, verbose, chatClient, graphifyConfig.SurrealDb);
@@ -281,7 +301,12 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     }
 
     Console.WriteLine();
-    using var watchMode = new WatchMode(Console.Out, verbose);
+    using var watchMode = new WatchMode(Console.Out, verbose, new SurrealDbExportOptions(
+        graphifyConfig.SurrealDb.Endpoint,
+        graphifyConfig.SurrealDb.Username,
+        graphifyConfig.SurrealDb.Password,
+        graphifyConfig.SurrealDb.Namespace,
+        graphifyConfig.SurrealDb.Database));
     watchMode.SetInitialGraph(graph);
     await watchMode.WatchAsync(path, output, formats, cancellationToken);
     return 0;
@@ -309,6 +334,54 @@ benchmarkCommand.SetAction(async (parseResult, cancellationToken) =>
 
 rootCommand.Subcommands.Add(benchmarkCommand);
 
+// ── init command ─────────────────────────────────────────────────────────
+var initInstallOpt = new Option<string?>("--install")
+{
+    Description = "Target specific agents (comma-separated, e.g. copilot,claude)"
+};
+
+var initUninstallOpt = new Option<bool>("--uninstall")
+{
+    Description = "Remove graphify instructions from all agent files"
+};
+
+var initForceOpt = new Option<bool>("--force")
+{
+    Description = "Regenerate even if already installed"
+};
+
+var initScopeOpt = new Option<string>("--scope")
+{
+    Description = "Scope of installation: project (default) or global",
+    DefaultValueFactory = _ => "project"
+};
+
+var initCommand = new Command("init", "Install MCP agent instructions for coding agents");
+initCommand.Options.Add(initInstallOpt);
+initCommand.Options.Add(initUninstallOpt);
+initCommand.Options.Add(initForceOpt);
+initCommand.Options.Add(initScopeOpt);
+
+initCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    var projectDir = Directory.GetCurrentDirectory();
+    var install = parseResult.GetValue(initInstallOpt);
+    var uninstall = parseResult.GetValue(initUninstallOpt);
+    var force = parseResult.GetValue(initForceOpt);
+    var scope = parseResult.GetValue(initScopeOpt);
+
+    var initService = new InitService(Console.Out, projectDir);
+
+    if (uninstall)
+    {
+        return await initService.RunAsync(uninstall: true);
+    }
+
+    return await initService.RunAsync(install, force: force);
+});
+
+rootCommand.Subcommands.Add(initCommand);
+
 // ── serve command ────────────────────────────────────────────────────────
 var servePathArg = new Argument<string>("graph-path")
 {
@@ -321,14 +394,56 @@ var serveVerboseOpt = new Option<bool>("--verbose", "-v")
     Description = "Enable verbose logging"
 };
 
+var serveSurrealPathOpt = new Option<string?>("--surreal-path")
+{
+    Description = "Path to embedded SurrealDB RocksDB file (e.g., graphify-out/codebase.db)"
+};
+
+var serveSurrealEndpointOpt = new Option<string?>("--surreal-endpoint")
+{
+    Description = "Remote SurrealDB endpoint (e.g., http://localhost:8000)"
+};
+
+var serveSurrealUserOpt = new Option<string?>("--surreal-user")
+{
+    Description = "SurrealDB username (default: root)"
+};
+
+var serveSurrealPassOpt = new Option<string?>("--surreal-pass")
+{
+    Description = "SurrealDB password"
+};
+
+var serveSurrealNsOpt = new Option<string?>("--surreal-ns")
+{
+    Description = "SurrealDB namespace (default: graphify)"
+};
+
+var serveSurrealDbOpt = new Option<string?>("--surreal-db")
+{
+    Description = "SurrealDB database name (default: codebase)"
+};
+
 var serveCommand = new Command("serve", "Serve the knowledge graph over MCP (Model Context Protocol)");
 serveCommand.Arguments.Add(servePathArg);
 serveCommand.Options.Add(serveVerboseOpt);
+serveCommand.Options.Add(serveSurrealPathOpt);
+serveCommand.Options.Add(serveSurrealEndpointOpt);
+serveCommand.Options.Add(serveSurrealUserOpt);
+serveCommand.Options.Add(serveSurrealPassOpt);
+serveCommand.Options.Add(serveSurrealNsOpt);
+serveCommand.Options.Add(serveSurrealDbOpt);
 
 serveCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     var graphPath = parseResult.GetValue(servePathArg)!;
     var verbose = parseResult.GetValue(serveVerboseOpt);
+    var surrealPath = parseResult.GetValue(serveSurrealPathOpt);
+    var surrealEndpoint = parseResult.GetValue(serveSurrealEndpointOpt);
+    var surrealUser = parseResult.GetValue(serveSurrealUserOpt);
+    var surrealPass = parseResult.GetValue(serveSurrealPassOpt);
+    var surrealNs = parseResult.GetValue(serveSurrealNsOpt);
+    var surrealDb = parseResult.GetValue(serveSurrealDbOpt);
 
     var builder = Host.CreateApplicationBuilder(args);
 
@@ -338,48 +453,101 @@ serveCommand.SetAction(async (parseResult, cancellationToken) =>
         options.LogToStandardErrorThreshold = verbose ? LogLevel.Trace : LogLevel.Warning;
     });
 
-    KnowledgeGraph graph;
-    try
+    if (surrealEndpoint is not null || surrealPath is not null)
     {
-        if (!File.Exists(graphPath))
+        // ── SurrealDB mode ────────────────────────────────────────────
+        try
         {
-            await Console.Error.WriteLineAsync($"Error: Graph file not found at '{graphPath}'");
+            ISurrealDbClient db;
+
+            if (surrealPath is not null)
+            {
+                db = new SurrealDbRocksDbClient(surrealPath);
+            }
+            else
+            {
+                var options = SurrealDbOptions.Create()
+                    .WithEndpoint(surrealEndpoint!)
+                    .WithNamespace(surrealNs ?? "graphify")
+                    .WithDatabase(surrealDb ?? "codebase")
+                    .WithUsername(surrealUser)
+                    .WithPassword(surrealPass)
+                    .Build();
+
+                db = new SurrealDbClient(options);
+
+                if (surrealUser is not null)
+                {
+                    await db.SignIn(new RootAuth
+                    {
+                        Username = surrealUser,
+                        Password = surrealPass ?? ""
+                    });
+                }
+            }
+
+            builder.Services.AddSingleton<ISurrealDbClient>(db);
+            builder.Services.AddSingleton<IGraphBackend, SurrealDbGraphBackend>();
+
+            if (verbose)
+            {
+                await Console.Error.WriteLineAsync($"SurrealDB backend: {(surrealPath ?? surrealEndpoint)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"Error connecting to SurrealDB: {ex.Message}");
             return 1;
         }
-
-        var json = await File.ReadAllTextAsync(graphPath, cancellationToken);
-        var graphData = JsonSerializer.Deserialize<GraphJsonData>(json);
-
-        if (graphData == null)
+    }
+    else
+    {
+        // ── JSON file mode (existing behavior) ────────────────────────
+        KnowledgeGraph graph;
+        try
         {
-            await Console.Error.WriteLineAsync($"Error: Failed to parse graph JSON from '{graphPath}'");
+            if (!File.Exists(graphPath))
+            {
+                await Console.Error.WriteLineAsync($"Error: Graph file not found at '{graphPath}'");
+                return 1;
+            }
+
+            var json = await File.ReadAllTextAsync(graphPath, cancellationToken);
+            var graphData = JsonSerializer.Deserialize<GraphJsonData>(json);
+
+            if (graphData == null)
+            {
+                await Console.Error.WriteLineAsync($"Error: Failed to parse graph JSON from '{graphPath}'");
+                return 1;
+            }
+
+            graph = new KnowledgeGraph();
+
+            foreach (var node in graphData.Nodes)
+            {
+                graph.AddNode(node);
+            }
+
+            foreach (var edge in graphData.Edges)
+            {
+                graph.AddEdge(edge);
+            }
+
+            if (verbose)
+            {
+                await Console.Error.WriteLineAsync($"Loaded graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges");
+            }
+
+            builder.Services.AddSingleton(graph);
+            builder.Services.AddSingleton<IGraphBackend>(new MemoryGraphBackend(graph));
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"Error loading graph: {ex.Message}");
             return 1;
         }
-
-        graph = new KnowledgeGraph();
-
-        foreach (var node in graphData.Nodes)
-        {
-            graph.AddNode(node);
-        }
-
-        foreach (var edge in graphData.Edges)
-        {
-            graph.AddEdge(edge);
-        }
-
-        if (verbose)
-        {
-            await Console.Error.WriteLineAsync($"Loaded graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges");
-        }
-    }
-    catch (Exception ex)
-    {
-        await Console.Error.WriteLineAsync($"Error loading graph: {ex.Message}");
-        return 1;
     }
 
-    builder.Services.AddSingleton(graph);
     builder.Services.AddSingleton<GraphTools>();
     builder.Services.AddMcpServer()
         .WithStdioServerTransport()
@@ -509,6 +677,15 @@ static void ShowStyledConfig()
     azureTable.AddRow("Model", FormatValue(config.AzureOpenAI.ModelId));
     azureTable.AddRow("API Key", MaskSecret(config.AzureOpenAI.ApiKey));
     AnsiConsole.Write(azureTable);
+
+    // OpenAI section
+    var openAiTable = new Table().Border(TableBorder.Simple).Title("[bold cyan]OpenAI[/]");
+    openAiTable.AddColumn("[bold]Setting[/]");
+    openAiTable.AddColumn("[bold]Value[/]");
+    openAiTable.AddRow("Endpoint", FormatValue(config.OpenAi.Endpoint));
+    openAiTable.AddRow("Model", FormatValue(config.OpenAi.ModelId));
+    openAiTable.AddRow("API Key", MaskSecret(config.OpenAi.ApiKey));
+    AnsiConsole.Write(openAiTable);
 
     // Ollama section
     var ollamaTable = new Table().Border(TableBorder.Simple).Title("[bold cyan]Ollama[/]");

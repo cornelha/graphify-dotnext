@@ -24,7 +24,7 @@ graphify run [path] [options]
 | `--output`, `-o` | `graphify-out` | Output directory |
 | `--format`, `-f` | `json,html,report` | Export formats (comma-separated): `json`, `html`, `svg`, `neo4j`, `ladybug`, `surrealdb`, `obsidian`, `wiki`, `report` |
 | `--verbose`, `-v` | `false` | Enable detailed progress output |
-| `--provider`, `-p` | *(from config)* | AI provider: `azureopenai`, `ollama`, `copilotsdk` |
+| `--provider`, `-p` | *(from config)* | AI provider: `azureopenai`, `ollama`, `openai`, `copilotsdk` |
 | `--endpoint` | *(from config)* | AI service endpoint URL |
 | `--api-key` | *(from config)* | API key for the AI provider |
 | `--model` | *(from config)* | Model ID (e.g., `gpt-4o`, `llama3.2`) |
@@ -45,6 +45,9 @@ graphify run . --format json,html,svg,neo4j,ladybug,obsidian,wiki,report,surreal
 
 # Use Ollama locally
 graphify run . --provider ollama --model codellama
+
+# Use OpenAI-compatible endpoint (OpenAI API, LocalAI, LiteLLM, etc.)
+graphify run . --provider openai --endpoint https://api.openai.com/v1 --api-key sk-... --model gpt-4o
 
 # Custom output directory
 graphify run . --output my-output-dir

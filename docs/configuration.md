@@ -26,6 +26,7 @@ Select your AI backend:
 | Provider | When to use |
 |----------|-------------|
 | **Azure OpenAI** | Enterprise, private endpoints — requires endpoint, API key, deployment name |
+| **OpenAI (compatible)** | Any OpenAI-compatible service (OpenAI API, LocalAI, LiteLLM, vLLM, etc.) — requires endpoint, API key, model |
 | **Ollama (local)** | Offline/privacy — requires a running Ollama instance |
 | **GitHub Copilot SDK** | Zero-config for Copilot subscribers — just select a model |
 | **None (AST-only)** | No AI needed — structural extraction only |
@@ -63,11 +64,28 @@ Settings are resolved in priority order (highest wins):
 |----------|--------|---------|
 | 1 (highest) | **CLI arguments** | `--provider ollama --model codellama` |
 | 2 | **User secrets** | `dotnet user-secrets set "Graphify:Provider" "Ollama"` |
-| 3 | **Environment variables** | `GRAPHIFY__Provider=ollama` |
-| 4 | **appsettings.local.json** | Saved by `graphify config` wizard |
-| 5 (lowest) | **appsettings.json** | Built-in defaults |
+| 3 | **.env file** | `GRAPHIFY__Provider=OpenAi` in `.env` |
+| 4 | **Environment variables** | `GRAPHIFY__Provider=ollama` |
+| 5 | **appsettings.local.json** | Saved by `graphify config` wizard |
+| 6 (lowest) | **appsettings.json** | Built-in defaults |
 
 This means CLI flags always override everything else, user secrets override environment variables, and so on.
+
+## .env File
+
+For local development, create a `.env` file in the project root directory. Graphify loads it automatically at startup. This is useful for keeping API keys out of your shell history or IDE configuration.
+
+```bash
+# .env file — loaded automatically by graphify
+GRAPHIFY__Provider=OpenAi
+GRAPHIFY__OpenAi__Endpoint=https://opencode.ai/zen/v1
+GRAPHIFY__OpenAi__ApiKey=sk-opencode-zen-...
+GRAPHIFY__OpenAi__ModelId=deepseek-v4-flash-free
+```
+
+> **Security:** Add `.env` to your `.gitignore` to avoid committing secrets.
+
+> **Tip:** A comprehensive `.env.example` file with all available options is available in the [`docs/`](.env.example) folder.
 
 ## Environment Variables
 
@@ -79,6 +97,12 @@ export GRAPHIFY__Provider=AzureOpenAI
 export GRAPHIFY__AzureOpenAI__Endpoint=https://myresource.openai.azure.com/
 export GRAPHIFY__AzureOpenAI__ApiKey=sk-...
 export GRAPHIFY__AzureOpenAI__DeploymentName=gpt-4o
+
+# OpenAI (compatible)
+export GRAPHIFY__Provider=OpenAi
+export GRAPHIFY__OpenAi__Endpoint=https://api.openai.com/v1
+export GRAPHIFY__OpenAi__ApiKey=sk-...
+export GRAPHIFY__OpenAi__ModelId=gpt-4o
 
 # Ollama
 export GRAPHIFY__Provider=Ollama
@@ -98,11 +122,18 @@ For development, use .NET user secrets to avoid committing API keys:
 cd src/Graphify.Cli
 dotnet user-secrets init
 
+# Azure OpenAI
 # Set provider and credentials
 dotnet user-secrets set "Graphify:Provider" "AzureOpenAI"
 dotnet user-secrets set "Graphify:AzureOpenAI:Endpoint" "https://myresource.openai.azure.com/"
 dotnet user-secrets set "Graphify:AzureOpenAI:ApiKey" "sk-..."
 dotnet user-secrets set "Graphify:AzureOpenAI:DeploymentName" "gpt-4o"
+
+# OpenAI (compatible)
+dotnet user-secrets set "Graphify:Provider" "OpenAi"
+dotnet user-secrets set "Graphify:OpenAi:Endpoint" "https://api.openai.com/v1"
+dotnet user-secrets set "Graphify:OpenAi:ApiKey" "sk-..."
+dotnet user-secrets set "Graphify:OpenAi:ModelId" "gpt-4o"
 ```
 
 ## The `--config` Flag on Run
@@ -120,5 +151,6 @@ This opens the interactive wizard, saves your choices, then immediately runs the
 For detailed setup instructions per provider:
 
 - [Azure OpenAI Setup](setup-azure-openai.md)
+- [OpenAI (Compatible) Setup](setup-openai.md)
 - [Ollama Setup](setup-ollama.md)
 - [Copilot SDK Setup](setup-copilot-sdk.md)

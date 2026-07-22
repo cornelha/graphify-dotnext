@@ -10,6 +10,7 @@ public class GraphifyConfig
     public string? OutputFolder { get; set; }
     public string? ExportFormats { get; set; }
     public AzureOpenAIConfig AzureOpenAI { get; set; } = new();
+    public OpenAIConfig OpenAi { get; set; } = new();
     public OllamaConfig Ollama { get; set; } = new();
     public CopilotSdkConfig CopilotSdk { get; set; } = new();
     public SurrealDbConfig SurrealDb { get; set; } = new();
@@ -36,6 +37,17 @@ public class AzureOpenAIConfig
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
     public string? DeploymentName { get; set; }
+    public string? ModelId { get; set; }
+}
+
+/// <summary>
+/// OpenAI-compatible provider configuration.
+/// Works with OpenAI API, LocalAI, LiteLLM, vLLM, and any other OpenAI-compatible service.
+/// </summary>
+public class OpenAIConfig
+{
+    public string? Endpoint { get; set; }
+    public string? ApiKey { get; set; }
     public string? ModelId { get; set; }
 }
 

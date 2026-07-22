@@ -6,7 +6,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>graphify</ToolCommandName>
     <PackageId>graphify-dotnet</PackageId>
-    <Version>0.9.0-preview.4</Version>
+    <Version>0.9.0-preview.22</Version>
     <Description>AI-powered knowledge graph builder for codebases</Description>
     <Authors>Bruno Capuano</Authors>
     <PackageProjectUrl>https://github.com/elbruno/graphify-dotnet</PackageProjectUrl>
@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="DotNetEnv" Version="3.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />

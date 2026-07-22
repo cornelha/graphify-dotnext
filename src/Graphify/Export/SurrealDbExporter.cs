@@ -4,6 +4,7 @@ using SurrealDb.Net;
 using Microsoft.Extensions.DependencyInjection;
 using SurrealDb.Net.Models;
 using SurrealDb.Net.Models.Auth;
+using SurrealDb.Net.Models.Response;
 
 namespace Graphify.Export;
 
@@ -64,15 +65,18 @@ public sealed class SurrealDbExporter : IGraphExporter
     internal async Task ExportEmbeddedAsync(KnowledgeGraph graph, string outputPath,
         CancellationToken cancellationToken)
     {
+        var ns = _namespace ?? "graphify";
+        var dbName = _database ?? "codebase";
+
         if (_testClient is not null)
         {
-            await _testClient.Use("graphify", "codebase");
+            await _testClient.Use(ns, dbName);
             await ExportToClientAsync(_testClient, graph, cancellationToken);
             return;
         }
 
         await using var db = CreateRocksDbClient(outputPath);
-        await db.Use("graphify", "codebase");
+        await db.Use(ns, dbName);
         await ExportToClientAsync(db, graph, cancellationToken);
     }
 
@@ -87,31 +91,40 @@ public sealed class SurrealDbExporter : IGraphExporter
         return new SurrealDbRocksDbClient(outputPath);
     }
 
-private async Task ExportRemoteAsync(KnowledgeGraph graph,
-    CancellationToken cancellationToken)
-{
-    var configuration = SurrealDbOptions
-        .Create()
-        .WithEndpoint(_endpoint!)
-        .WithNamespace(_namespace ?? "graphify")
-        .WithDatabase(_database ?? "codebase")
-        .WithUsername(_username)
-        .WithPassword(_password)
-        .Build();
-
-    await using var db = new SurrealDbClient(configuration);
-
-    if (_username is not null)
+    private async Task ExportRemoteAsync(KnowledgeGraph graph,
+        CancellationToken cancellationToken)
     {
-        await db.SignIn(new RootAuth
-        {
-            Username = _username,
-            Password = _password ?? ""
-        });
-    }
+        var ns = _namespace ?? "graphify";
+        var dbName = _database ?? "codebase";
 
-    await ExportToClientAsync(db, graph, cancellationToken);
-}
+        // Connect without pre-selecting NS/DB — they may not exist yet on the
+        // remote server and would cause a connection-time failure.
+        var configuration = SurrealDbOptions
+            .Create()
+            .WithEndpoint(_endpoint!)
+            .WithUsername(_username)
+            .WithPassword(_password)
+            .Build();
+
+        await using var db = new SurrealDbClient(configuration);
+
+        if (_username is not null)
+        {
+            await db.SignIn(new RootAuth
+            {
+                Username = _username,
+                Password = _password ?? ""
+            });
+        }
+
+        // Remote SurrealDB does not auto-create namespaces/databases; define
+        // them (as root) before selecting them.
+        await db.RawQuery($"DEFINE NAMESPACE IF NOT EXISTS {ns};", cancellationToken: cancellationToken);
+        await db.RawQuery($"USE NS {ns}; DEFINE DATABASE IF NOT EXISTS {dbName};", cancellationToken: cancellationToken);
+        await db.Use(ns, dbName);
+
+        await ExportToClientAsync(db, graph, cancellationToken);
+    }
 
     private static async Task ExportToClientAsync(ISurrealDbClient db,
         KnowledgeGraph graph, CancellationToken cancellationToken)
@@ -121,82 +134,114 @@ private async Task ExportRemoteAsync(KnowledgeGraph graph,
         var nodes = graph.GetNodes().ToList();
         var edges = graph.GetEdges().ToList();
 
-        foreach (var node in nodes)
+        var items = nodes.Select(node => new Dictionary<string, object?>
         {
-            var escapedId = Uri.EscapeDataString(node.Id);
-            await db.Create("entity", new SurrealDbEntity
-            {
-                Id = (RecordId)("entity", escapedId),
-                label = node.Label,
-                kind = node.Type,
-                filePath = node.FilePath,
-                language = node.Language,
-                confidence = node.Confidence.ToString().ToUpperInvariant(),
-                community = node.Community,
-                metadata = node.Metadata is { Count: > 0 }
-                    ? node.Metadata.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value)
-                    : null
-            });
+            ["id"] = (RecordId)("entity", Uri.EscapeDataString(node.Id)),
+            ["label"] = node.Label,
+            ["kind"] = node.Type,
+            ["filePath"] = node.FilePath,
+            ["language"] = node.Language,
+            ["confidence"] = node.Confidence.ToString().ToUpperInvariant(),
+            ["community"] = node.Community,
+            ["metadata"] = node.Metadata is { Count: > 0 }
+                ? node.Metadata.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                : null
+        }).ToList();
+
+        var rels = edges.Select(edge => new Dictionary<string, object?>
+        {
+            ["in"] = (RecordId)("entity", Uri.EscapeDataString(edge.Source.Id)),
+            ["out"] = (RecordId)("entity", Uri.EscapeDataString(edge.Target.Id)),
+            ["type"] = edge.Relationship,
+            ["weight"] = edge.Weight,
+            ["confidence"] = edge.Confidence.ToString().ToUpperInvariant(),
+            ["metadata"] = edge.Metadata is { Count: > 0 }
+                ? edge.Metadata.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+                : null
+        }).ToList();
+
+        // Clear the existing graph FIRST in its own request so the DELETEs are fully
+        // committed before we try to INSERT with the same deterministic IDs. SurrealDB
+        // transactions keep tombstoned records visible within the transaction scope, so
+        // DELETE + INSERT in the same transaction would fail with "already exists".
+        //
+        // The risk of a crash between the DELETE and the INSERT (leaving an empty DB) is
+        // acceptable: both `run` and `watch` re-export the complete graph, so the next
+        // invocation restores it. Atomicity of the INSERT side is maintained by wrapping
+        // the inserts in their own BEGIN/COMMIT.
+        var deleteResponse = await db.RawQuery(
+            "DELETE relationship; DELETE entity;",
+            cancellationToken: cancellationToken);
+        EnsureSuccess(deleteResponse, "DELETE relationship; DELETE entity;");
+
+        if (items.Count == 0 && rels.Count == 0)
+        {
+            return; // Nothing to insert, graph is already empty
         }
 
-        for (int i = 0; i < edges.Count; i++)
+        // Atomic insert: all or nothing. A concurrent reader sees either the empty post-
+        // DELETE state or the complete new graph, never a half-inserted snapshot.
+        var statements = new List<string> { "BEGIN;" };
+        var parameters = new Dictionary<string, object?>();
+
+        if (items.Count > 0)
         {
-            var edge = edges[i];
-            var escapedSource = Uri.EscapeDataString(edge.Source.Id);
-            var escapedTarget = Uri.EscapeDataString(edge.Target.Id);
-            await db.Create("relationship", new SurrealDbRelationship
-            {
-                Id = (RecordId)("relationship", escapedSource + "->" + escapedTarget + "-" + i),
-                source = (RecordId)("entity", escapedSource),
-                target = (RecordId)("entity", escapedTarget),
-                type = edge.Relationship,
-                weight = edge.Weight,
-                confidence = edge.Confidence.ToString().ToUpperInvariant(),
-                metadata = edge.Metadata is { Count: > 0 }
-                    ? edge.Metadata.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value)
-                    : null
-            });
+            statements.Add("INSERT INTO entity $items;");
+            parameters["items"] = items;
         }
+
+        if (rels.Count > 0)
+        {
+            statements.Add("INSERT RELATION INTO relationship $rels;");
+            parameters["rels"] = rels;
+        }
+
+        statements.Add("COMMIT;");
+
+        var query = string.Join(" ", statements);
+        var response = await db.RawQuery(query, parameters, cancellationToken);
+        EnsureSuccess(response, query);
     }
+
+    /// <summary>
+    /// Throws with the actual SurrealDB error text instead of the SDK's opaque
+    /// "SurrealDbResponse is unsuccessful" message, so failures are diagnosable.
+    /// </summary>
+    private static void EnsureSuccess(SurrealDbResponse response, string query)
+    {
+        if (!response.HasErrors)
+        {
+            return;
+        }
+
+        var details = string.Join(" | ", response.Errors.Select(DescribeError));
+        throw new InvalidOperationException(
+            $"SurrealDB query failed: {details}{Environment.NewLine}Query: {query}");
+    }
+
+    private static string DescribeError(ISurrealDbErrorResult error) => error switch
+    {
+        SurrealDbErrorResult e => string.IsNullOrWhiteSpace(e.Details)
+            ? $"{e.Status} ({e.Kind})"
+            : e.Details,
+        SurrealDbProtocolErrorResult p => string.Join(" - ",
+            new[] { $"HTTP {(int)p.Code}", p.Description, p.Details, p.Information }
+                .Where(s => !string.IsNullOrWhiteSpace(s))),
+        _ => "unknown error result"
+    };
 
     private static async Task DefineSchemaAsync(ISurrealDbClient db)
     {
         // Schema definition. Separate statements with semicolons for SurrealQL compatibility.
+        // Indexes support the backend's server-side queries: community filtering/grouping
+        // and relationship-type aggregation.
         await db.Query($"""
             DEFINE TABLE IF NOT EXISTS entity;
             DEFINE TABLE IF NOT EXISTS relationship;
+            DEFINE INDEX IF NOT EXISTS idx_entity_community ON entity FIELDS community;
+            DEFINE INDEX IF NOT EXISTS idx_entity_kind ON entity FIELDS kind;
+            DEFINE INDEX IF NOT EXISTS idx_relationship_type ON relationship FIELDS type;
             """);
-    }
-
-    /// <summary>
-    /// Concrete type for SurrealDB entity records.
-    /// Dahomey.Cbor cannot serialize anonymous types; concrete types are required.
-    /// </summary>
-    internal sealed class SurrealDbEntity
-    {
-        public RecordId? Id { get; set; }
-        public string? label { get; set; }
-        public string? kind { get; set; }
-        public string? filePath { get; set; }
-        public string? language { get; set; }
-        public string? confidence { get; set; }
-        public int? community { get; set; }
-        public Dictionary<string, object?>? metadata { get; set; }
-    }
-
-    /// <summary>
-    /// Concrete type for SurrealDB relationship records.
-    /// Dahomey.Cbor cannot serialize anonymous types; concrete types are required.
-    /// </summary>
-    internal sealed class SurrealDbRelationship
-    {
-        public RecordId? Id { get; set; }
-        public RecordId? source { get; set; }
-        public RecordId? target { get; set; }
-        public string? type { get; set; }
-        public double weight { get; set; }
-        public string? confidence { get; set; }
-        public Dictionary<string, object?>? metadata { get; set; }
     }
 
 }

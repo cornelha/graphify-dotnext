@@ -19,6 +19,7 @@ public class ChatClientFactoryTests
         Assert.True(Enum.IsDefined(typeof(AiProvider), AiProvider.AzureOpenAI));
         Assert.True(Enum.IsDefined(typeof(AiProvider), AiProvider.Ollama));
         Assert.True(Enum.IsDefined(typeof(AiProvider), AiProvider.CopilotSdk));
+        Assert.True(Enum.IsDefined(typeof(AiProvider), AiProvider.OpenAi));
     }
 
     [Fact]
@@ -26,7 +27,7 @@ public class ChatClientFactoryTests
     public void AiProvider_HasExactlyThreeValues()
     {
         var values = Enum.GetValues<AiProvider>();
-        Assert.Equal(3, values.Length);
+        Assert.Equal(4, values.Length);
     }
 
     [Fact]
@@ -112,6 +113,48 @@ public class ChatClientFactoryTests
 
         var client = ChatClientFactory.Create(options);
         Assert.NotNull(client);
+    }
+
+    [Fact]
+    [Trait("Category", "Sdk")]
+    public void Create_OpenAi_MissingEndpoint_Throws()
+    {
+        var options = new AiProviderOptions(
+            Provider: AiProvider.OpenAi,
+            ApiKey: "key",
+            ModelId: "gpt-4o");
+
+        Assert.Throws<ArgumentException>(() =>
+            ChatClientFactory.Create(options));
+    }
+
+    [Fact]
+    [Trait("Category", "Sdk")]
+    public void Create_OpenAi_MissingApiKey_Throws()
+    {
+        var options = new AiProviderOptions(
+            Provider: AiProvider.OpenAi,
+            Endpoint: "https://api.openai.com/v1",
+            ModelId: "gpt-4o");
+
+        Assert.Throws<ArgumentException>(() =>
+            ChatClientFactory.Create(options));
+    }
+
+    [Fact]
+    [Trait("Category", "Sdk")]
+    public void AiProviderOptions_OpenAi_ConstructionWorks()
+    {
+        var options = new AiProviderOptions(
+            Provider: AiProvider.OpenAi,
+            Endpoint: "https://api.openai.com/v1",
+            ApiKey: "sk-test",
+            ModelId: "gpt-4o");
+
+        Assert.Equal(AiProvider.OpenAi, options.Provider);
+        Assert.Equal("https://api.openai.com/v1", options.Endpoint);
+        Assert.Equal("sk-test", options.ApiKey);
+        Assert.Equal("gpt-4o", options.ModelId);
     }
 
     [Fact]
